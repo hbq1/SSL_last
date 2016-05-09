@@ -4,6 +4,7 @@ import org.apache.spark.ml.feature.{IndexToString, StringIndexer}
 import org.apache.spark.ml.Pipeline
 import org.apache.spark.mllib.linalg.DenseVector
 import org.apache.spark.sql.functions.{udf, col}
+import org.apache.spark.sql.DataFrame
 
 
 /*
@@ -18,7 +19,7 @@ class PipelineForSSVLearning [
   M <: org.apache.spark.ml.classification.ProbabilisticClassificationModel[FeatureType, M]
 ](
    val classifier : org.apache.spark.ml.classification.ProbabilisticClassifier[FeatureType, E, M],
-   val thresholdTrust : Double
+   val thresholdTrust : Double = 0.95
  ) extends Serializable {
   var pipelineModel: org.apache.spark.ml.PipelineModel = _
   var pipeline:   org.apache.spark.ml.Pipeline = _
@@ -55,7 +56,7 @@ class PipelineForSSVLearning [
     this.fit(data.labeledData)
   }
 
-  def fit(labeledData : org.apache.spark.sql.DataFrame): org.apache.spark.ml.PipelineModel = {
+  def fit(labeledData : DataFrame): org.apache.spark.ml.PipelineModel = {
     pipelineModel = pipeline.fit(labeledData)
     pipelineModel
   }
@@ -63,11 +64,11 @@ class PipelineForSSVLearning [
   /*
    * Predict labels (eq. transform data)
    */
-  def transform(data : SSVData): org.apache.spark.sql.DataFrame = {
+  def transform(data : SSVData): DataFrame = {
     pipelineModel.transform(data.unlabeledData)
   }
 
-  def transform(unlabeledData : org.apache.spark.sql.DataFrame): org.apache.spark.sql.DataFrame = {
+  def transform(unlabeledData : DataFrame): DataFrame = {
     pipelineModel.transform(unlabeledData)
   }
 
@@ -77,26 +78,42 @@ class PipelineForSSVLearning [
    * If featureTransformer passed, it used only before transforming
    * Returns DataFrame of reliable samples with source format (no matter if featureTransformer passed)
    */
-  def getNewReliableData(data: SSVData, featuresTransformer: (DenseVector => DenseVector) = null): org.apache.spark.sql.DataFrame = {
+  def getNewReliableData(data: SSVData, featuresTransformer: (DenseVector => DenseVector) = null): DataFrame = {
     val sqlContext = data.labeledData.sqlContext
     val sparkContext = sqlContext.sparkContext
     import sqlContext.implicits._
 
     val predictions = if (featuresTransformer != null) {
       val sqlfunc = udf(featuresTransformer)
-      var unlData = data.rawUnlabeledData.withColumnRenamed(data.featuresCol, data.featuresCol + "_reserved")
+      val unlData = data.rawUnlabeledData.withColumnRenamed(data.featuresCol, data.featuresCol + "_reserved")
         .withColumn(data.featuresCol, sqlfunc(col(data.featuresCol + "_reserved")))
       pipelineModel.transform(unlData).drop(data.featuresCol).withColumnRenamed(data.featuresCol+"_reserved", data.featuresCol)
     } else {
       pipelineModel.transform(data.unlabeledData)
     }
     val rdd = predictions.rdd.filter(
-      x=> x(x.fieldIndex("probability")).asInstanceOf[org.apache.spark.mllib.linalg.DenseVector].toArray.max > thresholdTrust
+      x=> x(x.fieldIndex("probability")).asInstanceOf[DenseVector].toArray.max > thresholdTrust
     )
-    sparkContext.parallelize(rdd.map(x => SchemaTrainingSample(x(x.fieldIndex("indexedLabelPredictionSSV")).asInstanceOf[String].toDouble, x(x.fieldIndex(data.featuresCol)).asInstanceOf[org.apache.spark.mllib.linalg.DenseVector])
+    sparkContext.parallelize(rdd.map(x => SchemaTrainingSample(x(x.fieldIndex("indexedLabelPredictionSSV")).asInstanceOf[String].toDouble, x(x.fieldIndex(data.featuresCol)).asInstanceOf[DenseVector])
     ).collect()).toDF.withColumnRenamed("label", data.labelCol).withColumnRenamed("features", data.featuresCol)
   }
 
+ /*
+ * Special methods for ssv-learning.
+ */
+
+  def getPreparedPredictedData(predictions: DataFrame, fCol: String, lCol: String): DataFrame = {
+    val sqlContext = predictions.sqlContext
+    val sparkContext = sqlContext.sparkContext
+    import sqlContext.implicits._
+    predictions.select("indexedLabelPredictionSSV", fCol)
+      .map(x => SchemaTrainingSample(x(0).asInstanceOf[String].toDouble, x(1).asInstanceOf[DenseVector])).toDF
+      .withColumnRenamed("label", lCol).withColumnRenamed("features", fCol)
+  }
+
+  def mixLabeledAndPredictedData(data: SSVData, predictions: DataFrame): DataFrame = {
+    data.labeledData.unionAll(getPreparedPredictedData(predictions, data.featuresCol, data.labelCol))
+  }
 
  /*
   * Copy method

@@ -72,6 +72,13 @@ class SSVData extends Serializable {
     this
   }
 
+ /*
+  * Mix labeled and unlabeled data
+  */
+  def getMixedData: DataFrame = {
+    labeledData.drop(labelCol).unionAll(unlabeledData)
+  }
+
   def copy(): SSVData = {
     val res = new SSVData()
     res.unlabeledData = unlabeledData

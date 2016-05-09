@@ -5,10 +5,13 @@
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkConf
 import org.apache.log4j.{Level, Logger}
+
 import SSVTester._
 import SelfTrainingClassifier._
 import CoTrainingClassifier._
+import EMSSVClassifier._
 import SSVData._
+
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.sql._
@@ -48,6 +51,11 @@ object src {
     val SSVTester = new SSVTester().setData(data).setLabeledPart(0.05).setFolds(2)
 
     //create SelfTraining classifier and set parameters
+    val RFforEM = new RandomForestClassifier().setNumTrees(15)
+    val EMClassifier = new EMSSVClassifier(RFforEM)
+    EMClassifier.setVerbose(false).setResidualPercent(3.0).setCountIterations(7).setFeaturesCol("features").setLabelCol("indexedLabel")
+
+    //create SelfTraining classifier and set parameters
     val RFforST = new RandomForestClassifier().setNumTrees(15)
     val STClassifier = new SelfTrainingClassifier(RFforST)
     STClassifier.setVerbose(false).setThreshold(0.95).setCountIterations(3).setFeaturesCol("features").setLabelCol("indexedLabel")
@@ -64,9 +72,7 @@ object src {
 
     //create list of algorithms to test
     //format : (transformer, name)
-    val algorithmsToTest = List((RFClassifier, "RandomForest"), (STClassifier, "SelfTraining"), (CTClassifier, "CoTraining"))
-
-
+    val algorithmsToTest = List((RFClassifier, "RandomForest"), (EMClassifier, "EM"), (STClassifier, "SelfTraining"), (CTClassifier, "CoTraining"))
 
     //launch testing procedure
     val testResult = SSVTester.evaluateWithAllMetrics(algorithmsToTest, data)
