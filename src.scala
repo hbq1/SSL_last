@@ -5,13 +5,9 @@
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkConf
 import org.apache.log4j.{Level, Logger}
-
 import SSVTester._
-import SelfTrainingClassifier._
-import CoTrainingClassifier._
-import EMSSVClassifier._
+import SSVClassifier.{CoTrainingClassifier, EMSSVClassifier, SelfTrainingClassifier}
 import SSVData._
-
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.sql._
@@ -36,7 +32,7 @@ object src {
     import sqlContext.implicits._
 
     //load rawData from hdd
-    val rawData = sparkContext.textFile("C:\\Users\\Yuri\\Documents\\data\\Digit1.txt")
+    val rawData = sparkContext.textFile("C:\\Users\\Yuri\\Documents\\data\\mailSpam.txt")
 
     //prepare data structure
     val data: DataFrame = rawData.map { line =>
@@ -74,11 +70,50 @@ object src {
     //format : (transformer, name)
     val algorithmsToTest = List((RFClassifier, "RandomForest"), (EMClassifier, "EM"), (STClassifier, "SelfTraining"), (CTClassifier, "CoTraining"))
 
+    var curFraction = 0.120
+    val endFraction = 0.205
+    val jumpFraction = 0.135
+    var step = 0.005
+
+    val time = System.currentTimeMillis()
+    var time2 = System.currentTimeMillis()
+
+    val results = new Array[Array[org.apache.spark.sql.Row]](algorithmsToTest.size)
+    for(i <- algorithmsToTest.indices)
+      results(i) = new Array[org.apache.spark.sql.Row](0)
+
+    SSVTester.setFolds(1)
+    while (Math.abs(curFraction - endFraction) > step/100) {
+      SSVTester.setLabeledPart(curFraction)
+      SSVTester.resplitData()
+      val testResult = SSVTester.evaluateWithAllMetrics(algorithmsToTest).collect()
+      for(i <- algorithmsToTest.indices) {
+        results(i) = results(i) :+ testResult(i)
+      }
+
+      println(curFraction + " done in " + (System.currentTimeMillis() - time2)/1000 + " sec")
+      time2 = System.currentTimeMillis()
+
+      if (Math.abs(curFraction - jumpFraction) < 0.0001)
+        step = 0.01
+      curFraction += step
+    }
+
+    for(i <- algorithmsToTest.indices) {
+      val z = sparkContext.parallelize(results(i))
+      z.repartition(1).saveAsTextFile(results(i)(0)(0)+"_result")
+    }
+
+
+    println("TIME: " + (System.currentTimeMillis() - time)/1000)
+    /*
     //launch testing procedure
     val testResult = SSVTester.evaluateWithAllMetrics(algorithmsToTest, data)
 
     //show results
     testResult.show()
+    */
+
   }
 }
 

@@ -1,10 +1,8 @@
-package EMSSVClassifier
+package SSVClassifier
 
+import SSVData._
 import org.apache.spark.ml.util.Identifiable
 import org.apache.spark.sql.DataFrame
-import SSVData._
-import SSVClassifier._
-import org.apache.spark.mllib.linalg.DenseVector
 
 /*
  * Self-Training model realization

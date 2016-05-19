@@ -21,6 +21,9 @@ class SSVTester {
   var dataPositiveClass: DataFrame = _
   var dataNegativeClass: DataFrame = _
 
+  var positiveLabeledData, positiveUnlabeledData: DataFrame = _
+  var negativeLabeledData, negativeUnlabeledData: DataFrame = _
+
 /*
  * Parameters and setters
  */
@@ -44,8 +47,22 @@ class SSVTester {
   def setData(data: DataFrame) = {
     labelIndexer = new StringIndexer().setInputCol("label").setOutputCol("indexedLabel").fit(data)
     labelConverter = new IndexToString().setInputCol("prediction").setOutputCol("predictedLabel").setLabels(labelIndexer.labels)
-    dataPositiveClass = data.filter("label = 1.0").cache()
-    dataNegativeClass = data.filter("label = -1.0").cache()
+    dataPositiveClass = data.filter("label = 1.0").repartition(4).cache()
+    dataNegativeClass = data.filter("label = -1.0").repartition(4).cache()
+    resplitData()
+    this
+  }
+
+ /*
+  * resplit labeled and unlabeled data
+  */
+  def resplitData() = {
+    val Array(positiveLabeledDataT, positiveUnlabeledDataT) = dataPositiveClass.randomSplit(Array(labeledPart, 1 - labeledPart))
+    val Array(negativeLabeledDataT, negativeUnlabeledDataT) = dataNegativeClass.randomSplit(Array(labeledPart, 1 - labeledPart))
+    positiveLabeledData = positiveLabeledDataT.repartition(4).cache()
+    positiveUnlabeledData = positiveUnlabeledDataT.repartition(4).cache()
+    negativeLabeledData = negativeLabeledDataT.repartition(4).cache()
+    negativeUnlabeledData = negativeUnlabeledDataT.repartition(4).cache()
     this
   }
 
@@ -90,8 +107,7 @@ class SSVTester {
     E <: org.apache.spark.ml.classification.ProbabilisticClassifier[FeatureType, E, M],
     M <: org.apache.spark.ml.classification.ProbabilisticClassificationModel[FeatureType, M]
   ] (
-    algorithms : List[(org.apache.spark.ml.classification.ProbabilisticClassifier[FeatureType, E, M], String)],
-    data : DataFrame
+    algorithms : List[(org.apache.spark.ml.classification.ProbabilisticClassifier[FeatureType, E, M], String)]
   ): DataFrame = {
     val countAlgorithms = algorithms.length
     val precision = new Array[Double](countAlgorithms)
@@ -102,10 +118,8 @@ class SSVTester {
 
     var foldNum = 1
     while (foldNum <= folds) {
-      val Array(positiveLabeledData, positiveUnlabeledData) = dataPositiveClass.randomSplit(Array(labeledPart, 1 - labeledPart))
-      val Array(negativeLabeledData, negativeUnlabeledData) = dataNegativeClass.randomSplit(Array(labeledPart, 1 - labeledPart))
-      val labeledData = positiveLabeledData.unionAll(negativeLabeledData)
-      val unlabeledData = positiveUnlabeledData.unionAll(negativeUnlabeledData)
+      val labeledData = positiveLabeledData.unionAll(negativeLabeledData).cache()
+      val unlabeledData = positiveUnlabeledData.unionAll(negativeUnlabeledData).cache()
       for (algoNum <- 0 until countAlgorithms) {
         if (algorithms(algoNum)._1.isInstanceOf[SSVClassifier])
           algorithms(algoNum)._1.asInstanceOf[SSVClassifier].setUnlabeledData(unlabeledData)
@@ -125,12 +139,14 @@ class SSVTester {
         precision(algoNum) += metricsM.weightedPrecision
         recall(algoNum) += metricsM.weightedRecall
         f1(algoNum) += metricsM.weightedFMeasure
-        auc(algoNum) += metricsB.areaUnderROC
+        auc(algoNum) += (if (metricsB.areaUnderROC > 0.5) metricsB.areaUnderROC else 1-metricsB.areaUnderROC)
       }
       foldNum += 1
+      if (foldNum < folds)
+        resplitData()
     }
-    val k = for (i <- 0 until countAlgorithms) yield (algorithms(i)._2, labeledPart, precision(i)/folds, recall(i)/folds, f1(i)/folds, auc(i)/folds, time(i)/(1000*folds))
-    data.sqlContext.createDataFrame(k).toDF("name", "fraction", "weightedPrecision", "weightedRecall", "weightedF1score", "AUC", "learning time")
+    val k = for (i <- 0 until countAlgorithms) yield (algorithms(i)._2, labeledPart , precision(i)/folds, recall(i)/folds, f1(i)/folds, auc(i)/folds, time(i)/(1000*folds))
+    positiveLabeledData.sqlContext.createDataFrame(k).toDF("name", "labelFraction", "weightedPrecision", "weightedRecall", "weightedF1score", "AUC", "learning time")
   }
 
 }

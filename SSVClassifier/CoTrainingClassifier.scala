@@ -1,10 +1,9 @@
-package CoTrainingClassifier
+package SSVClassifier
 
-import org.apache.spark.ml.util.Identifiable
-import org.apache.spark.sql.DataFrame
-import SSVClassifier._
 import SSVData._
+import org.apache.spark.ml.util.Identifiable
 import org.apache.spark.mllib.linalg.DenseVector
+import org.apache.spark.sql.DataFrame
 
 
 /*

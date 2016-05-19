@@ -1,10 +1,8 @@
-package SelfTrainingClassifier
-
-import org.apache.spark.ml.util.Identifiable
-import org.apache.spark.sql.DataFrame
+package SSVClassifier
 
 import SSVData._
-import SSVClassifier._
+import org.apache.spark.ml.util.Identifiable
+import org.apache.spark.sql.DataFrame
 
 /*
  * Self-Training model realization
